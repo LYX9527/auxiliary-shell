@@ -60,10 +60,11 @@ declare -a menu_options=(
     "Nginx 服务器"
     "NginxUI 管理界面"
     "Docker 容器引擎"
+    "GOECS 服务器测试"
 )
 
 # 选择状态数组 (0=未选择, 1=已选择)
-declare -a selected=(0 0 0)
+declare -a selected=(0 0 0 0)
 
 # 当前光标位置
 current_pos=0
@@ -109,12 +110,12 @@ check_docker_installed() {
     if command -v docker >/dev/null 2>&1; then
         local docker_version=$(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         local compose_version=""
-        
+
         # 检测Docker Compose
         if docker compose version >/dev/null 2>&1; then
             compose_version=$(docker compose version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         fi
-        
+
         if [ -n "$docker_version" ]; then
             if [ -n "$compose_version" ]; then
                 echo "已安装，Docker:$docker_version + Compose:$compose_version"
@@ -151,18 +152,34 @@ check_nginxui_installed() {
     fi
 }
 
+# 检测GOECS是否已安装
+check_goecs_installed() {
+    if command -v goecs >/dev/null 2>&1; then
+        echo "已安装，命令可用"
+        return 0
+    # 检查goecs.sh脚本是否存在
+    elif [ -f "./goecs.sh" ] || [ -f "/usr/local/bin/goecs" ] || [ -f "/usr/bin/goecs" ]; then
+        echo "已安装，脚本存在"
+        return 0
+    else
+        echo "未安装"
+        return 1
+    fi
+}
+
 # 获取服务安装状态
 get_service_status() {
     case "$1" in
         "nginx") check_nginx_installed ;;
         "docker") check_docker_installed ;;
         "nginxui") check_nginxui_installed ;;
+        "goecs") check_goecs_installed ;;
         *) echo "未知服务" && return 1 ;;
     esac
 }
 
 # 服务状态数组 (存储检测结果)
-declare -a service_status=("" "" "")
+declare -a service_status=("" "" "" "")
 
 # =============================================================================
 # 预制安装步骤配置 (兼容bash 3.x)
@@ -344,6 +361,45 @@ get_step_info() {
                     ;;
             esac
             ;;
+        "goecs")
+            case "$step_num" in
+                1)
+                    case "$info_type" in
+                        "desc") echo "设置非交互模式环境变量" ;;
+                        "cmd") echo "export noninteractive=true" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                2)
+                    case "$info_type" in
+                        "desc") echo "下载 GOECS 安装脚本" ;;
+                        "cmd") echo "curl -L https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                3)
+                    case "$info_type" in
+                        "desc") echo "设置脚本执行权限" ;;
+                        "cmd") echo "chmod +x goecs.sh" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                4)
+                    case "$info_type" in
+                        "desc") echo "配置 GOECS 环境" ;;
+                        "cmd") echo "./goecs.sh env" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                5)
+                    case "$info_type" in
+                        "desc") echo "执行 GOECS 安装" ;;
+                        "cmd") echo "./goecs.sh install" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+            esac
+            ;;
     esac
 }
 
@@ -353,6 +409,7 @@ get_step_count() {
         "nginx") echo "7" ;;
         "docker") echo "14" ;;
         "nginxui") echo "1" ;;
+        "goecs") echo "5" ;;
         *) echo "0" ;;
     esac
 }
@@ -401,14 +458,14 @@ check_skip_installation() {
     local service_name="$1"
     local service_display_name="$2"
     local simulate="$3"
-    
+
     # 重新检测当前安装状态（可能在安装过程中状态发生变化）
     local current_status=$(get_service_status "$service_name")
-    
+
     if [[ "$current_status" == *"已安装"* ]]; then
         echo -e "${YELLOW}⚠️  检测到 ${service_display_name} 已安装 ($current_status)${NC}"
         echo ""
-        
+
         while true; do
             echo -e "${CYAN}请选择操作:${NC}"
             echo -e "${GREEN}  [1] 跳过安装 (推荐)${NC}"
@@ -420,10 +477,10 @@ check_skip_installation() {
             echo -e "${RED}  [3] 取消${NC}"
             echo ""
             echo -n -e "${BOLD}${YELLOW}请输入选择 [1/2/3]: ${NC}"
-            
+
             read -n 1 choice
             echo ""
-            
+
             case "$choice" in
                 1)
                     echo -e "${GREEN}✅ 已跳过 ${service_display_name} 安装${NC}"
@@ -468,7 +525,7 @@ execute_service_installation() {
     # 检查是否需要跳过安装（不管什么模式都检查）
     check_skip_installation "$service_name" "$service_display_name" "$simulate"
     local skip_result=$?
-    
+
     case $skip_result in
         1)  # 用户取消
             return 1
@@ -523,6 +580,12 @@ execute_service_installation() {
             echo -e "${YELLOW}   配置文件: /usr/local/etc/nginx-ui/app.ini${NC}"
             echo -e "${YELLOW}   服务管理: systemctl start|stop|restart nginxui${NC}"
             echo -e "${YELLOW}   说明: 首次访问将引导设置管理员账号${NC}"
+            ;;
+        "goecs")
+            echo -e "${YELLOW}   启动命令: goecs${NC}"
+            echo -e "${YELLOW}   脚本文件: ./goecs.sh${NC}"
+            echo -e "${YELLOW}   项目地址: https://github.com/oneclickvirt/ecs${NC}"
+            echo -e "${YELLOW}   说明: 服务器性能测试工具，使用 goecs 命令启动${NC}"
             ;;
     esac
     echo ""
@@ -584,13 +647,28 @@ show_service_steps() {
 # 检测所有服务状态
 detect_service_status() {
     echo -n "正在检测服务安装状态..."
-    
+
     # 检测各个服务
     service_status[0]=$(get_service_status "nginx")
-    service_status[1]=$(get_service_status "nginxui") 
+    service_status[1]=$(get_service_status "nginxui")
     service_status[2]=$(get_service_status "docker")
-    
+    service_status[3]=$(get_service_status "goecs")
+
+    # 自动取消已安装服务的选择状态
+    for i in "${!service_status[@]}"; do
+        if is_service_installed "$i"; then
+            selected[$i]=0
+        fi
+    done
+
     echo " 完成"
+}
+
+# 检查服务是否已安装 (辅助函数)
+is_service_installed() {
+    local index="$1"
+    local status="${service_status[$index]}"
+    [[ "$status" == *"已安装"* ]]
 }
 
 # 绘制菜单
@@ -611,16 +689,13 @@ draw_menu() {
         local status_text=""
 
         # 根据安装状态设置显示
-        if [[ "$status" == *"已安装"* ]]; then
-            if [ "${selected[$i]}" -eq 1 ]; then
-                checkbox="${GREEN}[✓]${NC}"
-            else
-                checkbox="${GREEN}[✓]${NC}"  # 已安装的显示为绿色勾
-            fi
+        if is_service_installed "$i"; then
+            # 已安装的服务 - 不可选择
+            checkbox="${CYAN}[◆]${NC}"  # 使用特殊符号表示已安装且不可选择
             status_text=" ${CYAN}($status)${NC}"
-            # 已安装的服务名称用绿色显示
-            color="${GREEN}"
+            color="${CYAN}"  # 已安装的服务用青色显示
         else
+            # 未安装的服务 - 可选择
             if [ "${selected[$i]}" -eq 1 ]; then
                 checkbox="${GREEN}[✓]${NC}"
             else
@@ -633,8 +708,10 @@ draw_menu() {
         # 设置光标
         if [ "$i" -eq "$current_pos" ]; then
             cursor="${YELLOW}➤ ${NC}"
-            if [[ "$status" != *"已安装"* ]]; then
+            if ! is_service_installed "$i"; then
                 color="${BOLD}${WHITE}"
+            else
+                color="${BOLD}${CYAN}"  # 已安装服务的光标也用青色
             fi
         else
             cursor="  "
@@ -642,7 +719,7 @@ draw_menu() {
 
         # 计算状态文本长度用于对齐
         local status_length=0
-        if [[ "$status" == *"已安装"* ]]; then
+        if is_service_installed "$i"; then
             # 估算中文字符长度（简单处理）
             status_length=$((${#status} + 5))
         fi
@@ -657,7 +734,7 @@ draw_menu() {
 
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BLUE}║${NC} ${PURPLE}提示: 使用空格键选择项目，回车键开始安装${NC}                     ${BLUE}║${NC}"
-    echo -e "${BLUE}║${NC} ${CYAN}说明: 绿色表示已安装，可选择重新安装${NC}                       ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC} ${CYAN}说明: 青色表示已安装（不可选择），空格可选择未安装服务${NC}       ${BLUE}║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -709,14 +786,20 @@ handle_menu() {
                 fi
                 ;;
             "SPACE")
-                if [ "${selected[$current_pos]}" -eq 1 ]; then
-                    selected[$current_pos]=0
-                    echo -e "${YELLOW}已取消选择: ${menu_options[$current_pos]}${NC}" >&2
+                # 检查是否为已安装的服务
+                if is_service_installed "$current_pos"; then
+                    echo -e "${YELLOW}该服务已安装，无法选择${NC}" >&2
+                    sleep 0.5
                 else
-                    selected[$current_pos]=1
-                    echo -e "${GREEN}已选择: ${menu_options[$current_pos]}${NC}" >&2
+                    if [ "${selected[$current_pos]}" -eq 1 ]; then
+                        selected[$current_pos]=0
+                        echo -e "${YELLOW}已取消选择: ${menu_options[$current_pos]}${NC}" >&2
+                    else
+                        selected[$current_pos]=1
+                        echo -e "${GREEN}已选择: ${menu_options[$current_pos]}${NC}" >&2
+                    fi
+                    sleep 0.2  # 短暂停顿显示反馈
                 fi
-                sleep 0.2  # 短暂停顿显示反馈
                 ;;
             "ENTER")
                 return 0
@@ -741,6 +824,11 @@ install_nginxui() {
 # 安装 Docker (使用预制步骤)
 install_docker() {
     execute_service_installation "docker" "Docker 容器引擎" "$SIMULATE_MODE"
+}
+
+# 安装 GOECS (使用预制步骤)
+install_goecs() {
+    execute_service_installation "goecs" "GOECS 服务器测试" "$SIMULATE_MODE"
 }
 
 # 显示选择确认
@@ -780,13 +868,13 @@ show_confirmation() {
             local item="${menu_options[$i]}"
             local status="${service_status[$i]}"
             local status_display=""
-            
+
             if [[ "$status" == *"已安装"* ]]; then
                 status_display=" ${YELLOW}($status - 将重新安装)${NC}"
             else
                 status_display=" ${GREEN}(新安装)${NC}"
             fi
-            
+
             echo -e "${BLUE}${NC}   ${GREEN}🔧 ${item}${status_display}${NC}"
         fi
     done
@@ -852,6 +940,7 @@ execute_installations() {
                 0) install_nginx ;;
                 1) install_nginxui ;;
                 2) install_docker ;;
+                3) install_goecs ;;
             esac
         fi
     done
@@ -877,7 +966,7 @@ main() {
 
     # 获取服务器IP地址
     get_server_ip
-    
+
     # 检测服务安装状态
     detect_service_status
 
