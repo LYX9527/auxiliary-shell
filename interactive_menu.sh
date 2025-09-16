@@ -65,7 +65,7 @@ draw_menu() {
     show_welcome
 
     echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║${BOLD}${CYAN}                        请选择要安装的服务                    ${NC}${BLUE}║${NC}"
+    echo -e "${BLUE}║${BOLD}${CYAN}                      请选择要安装的服务                      ${NC}${BLUE}║${NC}"
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
 
     for i in "${!menu_options[@]}"; do
@@ -168,7 +168,7 @@ handle_menu() {
 # 安装 Nginx
 install_nginx() {
     echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW}🔧 开始安装 Nginx 服务器...${NC}"
+    echo -e "${YELLOW} 开始安装 Nginx 服务器...${NC}"
     echo -e "${CYAN}================================${NC}"
 
     echo -e "${GREEN}✓ 更新包列表...${NC}"
@@ -196,7 +196,7 @@ install_nginx() {
 # 安装 NginxUI
 install_nginxui() {
     echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW}🔧 开始安装 NginxUI 管理界面...${NC}"
+    echo -e "${YELLOW} 开始安装 NginxUI 管理界面...${NC}"
     echo -e "${CYAN}================================${NC}"
 
     echo -e "${GREEN}✓ 检查依赖项...${NC}"
@@ -225,7 +225,7 @@ install_nginxui() {
 # 安装 Docker
 install_docker() {
     echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW}🔧 开始安装 Docker 容器引擎...${NC}"
+    echo -e "${YELLOW} 开始安装 Docker 容器引擎...${NC}"
     echo -e "${CYAN}================================${NC}"
 
     echo -e "${GREEN}✓ 更新包列表...${NC}"
@@ -262,15 +262,16 @@ install_docker() {
     echo ""
 }
 
-# 执行安装
-execute_installations() {
+# 显示选择确认
+show_confirmation() {
     local has_selection=false
+    local selected_items=()
 
-    # 检查是否有选择的项目
+    # 收集选中的项目
     for i in "${!selected[@]}"; do
         if [ "${selected[$i]}" -eq 1 ]; then
             has_selection=true
-            break
+            selected_items+=("${menu_options[$i]}")
         fi
     done
 
@@ -281,8 +282,59 @@ execute_installations() {
         echo ""
         echo -e "${PURPLE}按任意键返回菜单...${NC}"
         read -n 1 -s
-        return
+        return 1
     fi
+
+    clear_screen
+    show_welcome
+
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${BOLD}${YELLOW}                           安装确认                           ${NC}${BLUE}║${NC}"
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BLUE}║${NC} ${CYAN}您已选择安装以下服务:${NC}                                        ${BLUE}║${NC}"
+
+    for item in "${selected_items[@]}"; do
+        echo -e "${BLUE}${NC}   ${GREEN} ${item}${NC}$(printf '%*s' $((50 - ${#item})) '')${BLUE}${NC}"
+    done
+
+    echo -e "${BLUE}║${NC}                                                              ${BLUE}║${NC}"
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BLUE}║${NC} ${YELLOW}注意事项:${NC}                                                    ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${RED}• 安装过程需要管理员权限${NC}                                   ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${RED}• 请确保网络连接正常${NC}                                       ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${RED}• 安装可能需要几分钟时间${NC}                                   ${BLUE}║${NC}"
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BLUE}║${NC} ${PURPLE}确认要继续安装吗?${NC}                                            ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}                                                              ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${GREEN}[Y/y] 确认安装${NC}     ${RED}[N/n] 返回菜单${NC}                          ${BLUE}║${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    while true; do
+        echo -n -e "${BOLD}${YELLOW}请输入您的选择 [Y/n]: ${NC}"
+        read -n 1 choice
+        echo ""
+
+        case "$choice" in
+            [Yy]|'')
+                echo -e "${GREEN}✅ 确认安装，开始执行...${NC}"
+                sleep 1
+                return 0
+                ;;
+            [Nn])
+                echo -e "${YELLOW}❌ 已取消安装，返回菜单...${NC}"
+                sleep 1
+                return 1
+                ;;
+            *)
+                echo -e "${RED}⚠️  请输入 Y 或 N${NC}"
+                ;;
+        esac
+    done
+}
+
+# 执行安装
+execute_installations() {
 
     clear_screen
     show_welcome
@@ -323,15 +375,25 @@ main() {
     show_welcome
 
     # 处理菜单交互
-    if handle_menu; then
-        # 用户按了回车，执行安装
-        execute_installations
-    else
-        # 用户按了ESC，退出
-        clear_screen
-        echo -e "${GREEN}感谢使用 Linux 服务安装工具！${NC}"
-        echo -e "${CYAN}再见！${NC}"
-    fi
+    while true; do
+        if handle_menu; then
+            # 用户按了回车，显示确认页面
+            if show_confirmation; then
+                # 用户确认安装，执行安装
+                execute_installations
+                break
+            else
+                # 用户取消安装，返回菜单
+                continue
+            fi
+        else
+            # 用户按了ESC，退出
+            clear_screen
+            echo -e "${GREEN}感谢使用 Linux 服务安装工具！${NC}"
+            echo -e "${CYAN}再见！${NC}"
+            break
+        fi
+    done
 
     show_cursor
 }
