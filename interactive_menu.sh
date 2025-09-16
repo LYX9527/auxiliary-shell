@@ -44,6 +44,10 @@ show_welcome() {
     echo -e "${GREEN}   回车键     - 确认安装选择的项目${NC}"
     echo -e "${GREEN}   ESC键      - 退出程序${NC}"
     echo ""
+    echo -e "${CYAN}🔧 支持的安装模式:${NC}"
+    echo -e "${BLUE}   • 模拟模式 - 显示命令但不实际执行${NC}"
+    echo -e "${BLUE}   • 真实模式 - 执行预制的安装步骤${NC}"
+    echo ""
 }
 
 # 菜单选项
@@ -58,6 +62,342 @@ declare -a selected=(0 0 0)
 
 # 当前光标位置
 current_pos=0
+
+# =============================================================================
+# 预制安装步骤配置 (兼容bash 3.x)
+# =============================================================================
+
+# 通用依赖包命令
+COMMON_DEPS_CMD="sudo apt install -y curl gnupg2 ca-certificates lsb-release debian-archive-keyring software-properties-common apt-transport-https"
+
+# 获取步骤信息的函数
+get_step_info() {
+    local service="$1"
+    local step_num="$2"
+    local info_type="$3"  # desc, cmd, critical
+    
+    case "$service" in
+        "nginx")
+            case "$step_num" in
+                1)
+                    case "$info_type" in
+                        "desc") echo "安装依赖包" ;;
+                        "cmd") echo "sudo apt install curl gnupg2 ca-certificates lsb-release debian-archive-keyring" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                2)
+                    case "$info_type" in
+                        "desc") echo "下载并添加 Nginx GPG 密钥" ;;
+                        "cmd") echo "curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg >/dev/null" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                3)
+                    case "$info_type" in
+                        "desc") echo "验证 GPG 密钥" ;;
+                        "cmd") echo "gpg --dry-run --quiet --no-keyring --import --import-options import-show /usr/share/keyrings/nginx-archive-keyring.gpg" ;;
+                        "critical") echo "false" ;;
+                    esac
+                    ;;
+                4)
+                    case "$info_type" in
+                        "desc") echo "添加 Nginx 官方仓库" ;;
+                        "cmd") echo "echo \"deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu \`lsb_release -cs\` nginx\" | sudo tee /etc/apt/sources.list.d/nginx.list" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                5)
+                    case "$info_type" in
+                        "desc") echo "更新包列表" ;;
+                        "cmd") echo "sudo apt update" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                6)
+                    case "$info_type" in
+                        "desc") echo "安装 Nginx" ;;
+                        "cmd") echo "sudo apt install nginx" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                7)
+                    case "$info_type" in
+                        "desc") echo "验证 Nginx 安装" ;;
+                        "cmd") echo "nginx -v" ;;
+                        "critical") echo "false" ;;
+                    esac
+                    ;;
+            esac
+            ;;
+        "docker")
+            case "$step_num" in
+                1)
+                    case "$info_type" in
+                        "desc") echo "更新包列表" ;;
+                        "cmd") echo "sudo apt update" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                2)
+                    case "$info_type" in
+                        "desc") echo "安装通用依赖包" ;;
+                        "cmd") echo "$COMMON_DEPS_CMD" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                3)
+                    case "$info_type" in
+                        "desc") echo "添加 Docker GPG 密钥" ;;
+                        "cmd") echo "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                4)
+                    case "$info_type" in
+                        "desc") echo "添加 Docker 官方仓库" ;;
+                        "cmd") echo "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                5)
+                    case "$info_type" in
+                        "desc") echo "更新包列表" ;;
+                        "cmd") echo "sudo apt update" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                6)
+                    case "$info_type" in
+                        "desc") echo "安装 Docker Engine" ;;
+                        "cmd") echo "sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                7)
+                    case "$info_type" in
+                        "desc") echo "启动 Docker 服务" ;;
+                        "cmd") echo "sudo systemctl start docker" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                8)
+                    case "$info_type" in
+                        "desc") echo "设置开机自启" ;;
+                        "cmd") echo "sudo systemctl enable docker" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                9)
+                    case "$info_type" in
+                        "desc") echo "添加当前用户到 docker 组" ;;
+                        "cmd") echo "sudo usermod -aG docker \$USER" ;;
+                        "critical") echo "false" ;;
+                    esac
+                    ;;
+                10)
+                    case "$info_type" in
+                        "desc") echo "验证 Docker 安装" ;;
+                        "cmd") echo "docker --version" ;;
+                        "critical") echo "false" ;;
+                    esac
+                    ;;
+            esac
+            ;;
+        "nginxui")
+            case "$step_num" in
+                1)
+                    case "$info_type" in
+                        "desc") echo "检查 Docker 是否已安装" ;;
+                        "cmd") echo "docker --version" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                2)
+                    case "$info_type" in
+                        "desc") echo "创建 NginxUI 配置目录" ;;
+                        "cmd") echo "sudo mkdir -p /etc/nginxui" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                3)
+                    case "$info_type" in
+                        "desc") echo "下载 NginxUI 镜像" ;;
+                        "cmd") echo "sudo docker pull uozi/nginx-ui:latest" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                4)
+                    case "$info_type" in
+                        "desc") echo "创建 NginxUI 容器" ;;
+                        "cmd") echo "sudo docker run -d --name nginxui --restart=always -e SKIP_INSTALL=true -p 8080:80 -p 8443:443 -v /etc/nginx:/etc/nginx -v /etc/nginxui:/etc/nginxui uozi/nginx-ui:latest" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                5)
+                    case "$info_type" in
+                        "desc") echo "检查容器状态" ;;
+                        "cmd") echo "sudo docker ps | grep nginxui" ;;
+                        "critical") echo "false" ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+# 定义每个服务的步骤数量
+get_step_count() {
+    case "$1" in
+        "nginx") echo "7" ;;
+        "docker") echo "10" ;;
+        "nginxui") echo "5" ;;
+        *) echo "0" ;;
+    esac
+}
+
+# =============================================================================
+# 安装执行函数
+# =============================================================================
+
+# 执行单个命令步骤
+execute_step() {
+    local desc="$1"
+    local cmd="$2"
+    local critical="$3"
+    local simulate="${4:-true}"  # 默认模拟模式
+    
+    echo -e "${GREEN}✓ ${desc}...${NC}"
+    
+    if [ "$simulate" = "true" ]; then
+        # 模拟模式 - 仅显示命令
+        echo -e "${BLUE}  模拟命令: ${cmd}${NC}"
+        sleep 1
+        return 0
+    else
+        # 真实执行模式
+        echo -e "${PURPLE}  执行命令: ${cmd}${NC}"
+        
+        # 执行命令
+        if eval "$cmd" 2>/dev/null; then
+            echo -e "${GREEN}    执行成功${NC}"
+            return 0
+        else
+            echo -e "${RED}    执行失败${NC}"
+            if [ "$critical" = "true" ]; then
+                echo -e "${RED}❌ 关键步骤失败，安装中止！${NC}"
+                return 1
+            else
+                echo -e "${YELLOW}⚠️  非关键步骤失败，继续安装...${NC}"
+                return 0
+            fi
+        fi
+    fi
+}
+
+# 通用安装函数
+execute_service_installation() {
+    local service_name="$1"
+    local service_display_name="$2"
+    local simulate="${3:-true}"  # 默认模拟模式
+    
+    echo -e "${CYAN}================================${NC}"
+    echo -e "${YELLOW} 开始安装 ${service_display_name}...${NC}"
+    echo -e "${CYAN}================================${NC}"
+    echo ""
+    
+    # 获取步骤总数
+    local total_steps=$(get_step_count "$service_name")
+    
+    # 执行所有步骤
+    for ((i=1; i<=total_steps; i++)); do
+        local desc=$(get_step_info "$service_name" "$i" "desc")
+        local cmd=$(get_step_info "$service_name" "$i" "cmd")
+        local critical=$(get_step_info "$service_name" "$i" "critical")
+        
+        # 执行步骤
+        if ! execute_step "$desc" "$cmd" "$critical" "$simulate"; then
+            return 1  # 如果关键步骤失败，退出安装
+        fi
+    done
+    
+    echo ""
+    echo -e "${GREEN}✅ ${service_display_name} 安装完成！${NC}"
+    
+    # 显示服务特定的后续信息
+    case "$service_name" in
+        "nginx")
+            echo -e "${YELLOW}   服务端口: 80 (HTTP), 443 (HTTPS)${NC}"
+            echo -e "${YELLOW}   配置文件: /etc/nginx/nginx.conf${NC}"
+            echo -e "${YELLOW}   管理命令: sudo systemctl start|stop|restart nginx${NC}"
+            ;;
+        "docker")
+            echo -e "${YELLOW}   版本信息: docker --version${NC}"
+            echo -e "${YELLOW}   用户组: 注销重新登录后生效${NC}"
+            echo -e "${YELLOW}   管理命令: sudo systemctl start|stop|restart docker${NC}"
+            ;;
+        "nginxui")
+            echo -e "${YELLOW}   访问地址: http://your-server:8080${NC}"
+            echo -e "${YELLOW}   HTTPS地址: https://your-server:8443${NC}"
+            echo -e "${YELLOW}   默认用户: admin${NC}"
+            echo -e "${YELLOW}   默认密码: admin${NC}"
+            ;;
+    esac
+    echo ""
+    
+    return 0
+}
+
+# 模式选择变量 (true=模拟模式, false=真实安装模式)
+SIMULATE_MODE=true
+
+# =============================================================================
+# 查看预制安装步骤
+# =============================================================================
+
+# 显示某个服务的预制安装步骤
+show_service_steps() {
+    local service_name="$1"
+    local service_display_name="$2"
+    
+    clear_screen
+    show_welcome
+    
+    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${BOLD}${CYAN}                    ${service_display_name} 预制安装步骤                   ${NC}${BLUE}║${NC}"
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
+    
+    # 获取步骤总数
+    local total_steps=$(get_step_count "$service_name")
+    
+    # 显示所有步骤
+    for ((i=1; i<=total_steps; i++)); do
+        local desc=$(get_step_info "$service_name" "$i" "desc")
+        local cmd=$(get_step_info "$service_name" "$i" "cmd")
+        local critical=$(get_step_info "$service_name" "$i" "critical")
+        
+        # 显示步骤
+        local critical_mark=""
+        if [ "$critical" = "true" ]; then
+            critical_mark="${RED}[必需]${NC}"
+        else
+            critical_mark="${YELLOW}[可选]${NC}"
+        fi
+        
+        echo -e "${BLUE}║${NC} ${GREEN}步骤 $i:${NC} $desc $critical_mark"
+        echo -e "${BLUE}║${NC}   ${PURPLE}命令:${NC} $cmd"
+        echo -e "${BLUE}║${NC}"
+    done
+    
+    echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BLUE}║${NC} ${CYAN}总共 $total_steps 个安装步骤${NC}"
+    echo -e "${BLUE}║${NC} ${GREEN}[必需]${NC} 步骤失败将中止安装${NC}"
+    echo -e "${BLUE}║${NC} ${YELLOW}[可选]${NC} 步骤失败将继续安装${NC}"
+    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${PURPLE}按任意键返回...${NC}"
+    read -n 1 -s
+}
 
 # 绘制菜单
 draw_menu() {
@@ -165,101 +505,19 @@ handle_menu() {
     done
 }
 
-# 安装 Nginx
+# 安装 Nginx (使用预制步骤)
 install_nginx() {
-    echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW} 开始安装 Nginx 服务器...${NC}"
-    echo -e "${CYAN}================================${NC}"
-
-    echo -e "${GREEN}✓ 更新包列表...${NC}"
-    echo -e "${BLUE}  模拟命令: apt update${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 安装 Nginx...${NC}"
-    echo -e "${BLUE}  模拟命令: apt install -y nginx${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 启动 Nginx 服务...${NC}"
-    echo -e "${BLUE}  模拟命令: systemctl start nginx${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 设置开机自启...${NC}"
-    echo -e "${BLUE}  模拟命令: systemctl enable nginx${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✅ Nginx 安装完成！${NC}"
-    echo -e "${YELLOW}   服务端口: 80 (HTTP), 443 (HTTPS)${NC}"
-    echo -e "${YELLOW}   配置文件: /etc/nginx/nginx.conf${NC}"
-    echo ""
+    execute_service_installation "nginx" "Nginx 服务器" "$SIMULATE_MODE"
 }
 
-# 安装 NginxUI
+# 安装 NginxUI (使用预制步骤)
 install_nginxui() {
-    echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW} 开始安装 NginxUI 管理界面...${NC}"
-    echo -e "${CYAN}================================${NC}"
-
-    echo -e "${GREEN}✓ 检查依赖项...${NC}"
-    echo -e "${BLUE}  模拟检查: Docker 环境${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 下载 NginxUI 镜像...${NC}"
-    echo -e "${BLUE}  模拟命令: docker pull uozi/nginx-ui:latest${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 创建配置目录...${NC}"
-    echo -e "${BLUE}  模拟命令: mkdir -p /etc/nginxui${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 启动 NginxUI 容器...${NC}"
-    echo -e "${BLUE}  模拟命令: docker run -d --name nginxui -p 8080:80 uozi/nginx-ui${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✅ NginxUI 安装完成！${NC}"
-    echo -e "${YELLOW}   访问地址: http://your-server:8080${NC}"
-    echo -e "${YELLOW}   默认用户: admin${NC}"
-    echo -e "${YELLOW}   默认密码: admin${NC}"
-    echo ""
+    execute_service_installation "nginxui" "NginxUI 管理界面" "$SIMULATE_MODE"
 }
 
-# 安装 Docker
+# 安装 Docker (使用预制步骤)
 install_docker() {
-    echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW} 开始安装 Docker 容器引擎...${NC}"
-    echo -e "${CYAN}================================${NC}"
-
-    echo -e "${GREEN}✓ 更新包列表...${NC}"
-    echo -e "${BLUE}  模拟命令: apt update${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 安装依赖包...${NC}"
-    echo -e "${BLUE}  模拟命令: apt install -y apt-transport-https ca-certificates curl gnupg lsb-release${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 添加 Docker GPG 密钥...${NC}"
-    echo -e "${BLUE}  模拟命令: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 添加 Docker 仓库...${NC}"
-    echo -e "${BLUE}  模拟命令: add-apt-repository docker${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 安装 Docker Engine...${NC}"
-    echo -e "${BLUE}  模拟命令: apt install -y docker-ce docker-ce-cli containerd.io${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 启动 Docker 服务...${NC}"
-    echo -e "${BLUE}  模拟命令: systemctl start docker${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✓ 设置开机自启...${NC}"
-    echo -e "${BLUE}  模拟命令: systemctl enable docker${NC}"
-    sleep 1
-
-    echo -e "${GREEN}✅ Docker 安装完成！${NC}"
-    echo -e "${YELLOW}   版本信息: docker --version${NC}"
-    echo -e "${YELLOW}   用户组: usermod -aG docker \$USER${NC}"
-    echo ""
+    execute_service_installation "docker" "Docker 容器引擎" "$SIMULATE_MODE"
 }
 
 # 显示选择确认
@@ -304,30 +562,39 @@ show_confirmation() {
     echo -e "${BLUE}║${NC}   ${RED}• 请确保网络连接正常${NC}                                       ${BLUE}║${NC}"
     echo -e "${BLUE}║${NC}   ${RED}• 安装可能需要几分钟时间${NC}                                   ${BLUE}║${NC}"
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${BLUE}║${NC} ${PURPLE}确认要继续安装吗?${NC}                                            ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC} ${PURPLE}安装模式选择:${NC}                                               ${BLUE}║${NC}"
     echo -e "${BLUE}║${NC}                                                              ${BLUE}║${NC}"
-    echo -e "${BLUE}║${NC}   ${GREEN}[Y/y] 确认安装${NC}     ${RED}[N/n] 返回菜单${NC}                          ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${GREEN}[1] 模拟安装 ${YELLOW}(仅显示命令，不实际执行)${NC}                    ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${RED}[2] 真实安装 ${YELLOW}(实际执行命令，需要sudo权限)${NC}               ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${CYAN}[0] 返回菜单${NC}                                              ${BLUE}║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
     while true; do
-        echo -n -e "${BOLD}${YELLOW}请输入您的选择 [Y/n]: ${NC}"
+        echo -n -e "${BOLD}${YELLOW}请选择安装模式 [1/2/0]: ${NC}"
         read -n 1 choice
         echo ""
 
         case "$choice" in
-            [Yy]|'')
-                echo -e "${GREEN}✅ 确认安装，开始执行...${NC}"
+            1)
+                echo -e "${GREEN}✅ 选择模拟安装模式${NC}"
+                SIMULATE_MODE=true
                 sleep 1
                 return 0
                 ;;
-            [Nn])
-                echo -e "${YELLOW}❌ 已取消安装，返回菜单...${NC}"
+            2)
+                echo -e "${RED}✅ 选择真实安装模式 - 请确保有sudo权限！${NC}"
+                SIMULATE_MODE=false
+                sleep 1
+                return 0
+                ;;
+            0)
+                echo -e "${YELLOW}❌ 返回菜单...${NC}"
                 sleep 1
                 return 1
                 ;;
             *)
-                echo -e "${RED}⚠️  请输入 Y 或 N${NC}"
+                echo -e "${RED}⚠️  请输入 1、2 或 0${NC}"
                 ;;
         esac
     done
