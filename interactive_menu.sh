@@ -36,6 +36,11 @@ show_welcome() {
     echo -e "${CYAN}║${GREEN}  作者: @yltf https://github.com/LYX9527                      ${NC}${CYAN}║${NC}"
     echo -e "${CYAN}║${GREEN}  日期: $(date '+%Y-%m-%d')                                            ${NC}${CYAN}║${NC}"
     echo -e "${CYAN}║${GREEN}  适用: ubuntu 系统                                           ${NC}${CYAN}║${NC}"
+    if [ -n "$SERVER_IP" ] && [ "$SERVER_IP" != "localhost" ]; then
+        echo -e "${CYAN}║${PURPLE}  服务器IP: ${SERVER_IP}$(printf '%*s' $((41 - ${#SERVER_IP})) '')${NC}${CYAN}║${NC}"
+    else
+        echo -e "${CYAN}║${YELLOW}  服务器IP: 获取失败，请手动确认                               ${NC}${CYAN}║${NC}"
+    fi
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${YELLOW}📋 使用说明:${NC}"
@@ -63,6 +68,21 @@ declare -a selected=(0 0 0)
 # 当前光标位置
 current_pos=0
 
+# 获取服务器IP地址
+SERVER_IP=""
+get_server_ip() {
+    echo -n "正在获取服务器IP地址..."
+    SERVER_IP=$(curl -s --connect-timeout 5 https://ip.yltf.org 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$SERVER_IP" ]; then
+        echo " 完成"
+        return 0
+    else
+        echo " 失败，将使用localhost"
+        SERVER_IP="localhost"
+        return 1
+    fi
+}
+
 # =============================================================================
 # 预制安装步骤配置 (兼容bash 3.x)
 # =============================================================================
@@ -75,7 +95,7 @@ get_step_info() {
     local service="$1"
     local step_num="$2"
     local info_type="$3"  # desc, cmd, critical
-    
+
     case "$service" in
         "nginx")
             case "$step_num" in
@@ -134,21 +154,21 @@ get_step_info() {
             case "$step_num" in
                 1)
                     case "$info_type" in
-                        "desc") echo "更新包列表" ;;
-                        "cmd") echo "sudo apt update" ;;
+                        "desc") echo "安装基础依赖包" ;;
+                        "cmd") echo "apt-get install ca-certificates curl gnupg lsb-release" ;;
                         "critical") echo "true" ;;
                     esac
                     ;;
                 2)
                     case "$info_type" in
-                        "desc") echo "安装通用依赖包" ;;
-                        "cmd") echo "$COMMON_DEPS_CMD" ;;
+                        "desc") echo "安装额外依赖包" ;;
+                        "cmd") echo "sudo apt install -y apt-transport-https ca-certificates curl software-properties-common" ;;
                         "critical") echo "true" ;;
                     esac
                     ;;
                 3)
                     case "$info_type" in
-                        "desc") echo "添加 Docker GPG 密钥" ;;
+                        "desc") echo "下载并添加 Docker GPG 密钥" ;;
                         "cmd") echo "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg" ;;
                         "critical") echo "true" ;;
                     esac
@@ -169,36 +189,64 @@ get_step_info() {
                     ;;
                 6)
                     case "$info_type" in
-                        "desc") echo "安装 Docker Engine" ;;
-                        "cmd") echo "sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" ;;
+                        "desc") echo "安装 Docker CE" ;;
+                        "cmd") echo "sudo apt install -y docker-ce docker-ce-cli containerd.io" ;;
                         "critical") echo "true" ;;
                     esac
                     ;;
                 7)
                     case "$info_type" in
-                        "desc") echo "启动 Docker 服务" ;;
-                        "cmd") echo "sudo systemctl start docker" ;;
-                        "critical") echo "true" ;;
+                        "desc") echo "验证 Docker 安装" ;;
+                        "cmd") echo "docker -v" ;;
+                        "critical") echo "false" ;;
                     esac
                     ;;
                 8)
                     case "$info_type" in
-                        "desc") echo "设置开机自启" ;;
+                        "desc") echo "启用 Docker 服务" ;;
                         "cmd") echo "sudo systemctl enable docker" ;;
                         "critical") echo "true" ;;
                     esac
                     ;;
                 9)
                     case "$info_type" in
-                        "desc") echo "添加当前用户到 docker 组" ;;
-                        "cmd") echo "sudo usermod -aG docker \$USER" ;;
-                        "critical") echo "false" ;;
+                        "desc") echo "设置 Docker 配置环境" ;;
+                        "cmd") echo "DOCKER_CONFIG=\${DOCKER_CONFIG:-\$HOME/.docker}" ;;
+                        "critical") echo "true" ;;
                     esac
                     ;;
                 10)
                     case "$info_type" in
-                        "desc") echo "验证 Docker 安装" ;;
-                        "cmd") echo "docker --version" ;;
+                        "desc") echo "创建 CLI 插件目录" ;;
+                        "cmd") echo "mkdir -p \$DOCKER_CONFIG/cli-plugins" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                11)
+                    case "$info_type" in
+                        "desc") echo "下载 Docker Compose 插件" ;;
+                        "cmd") echo "curl -SL https://github.com/docker/compose/releases/download/v2.39.2/docker-compose-linux-x86_64 -o \$DOCKER_CONFIG/cli-plugins/docker-compose" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                12)
+                    case "$info_type" in
+                        "desc") echo "显示配置目录路径" ;;
+                        "cmd") echo "echo \$DOCKER_CONFIG" ;;
+                        "critical") echo "false" ;;
+                    esac
+                    ;;
+                13)
+                    case "$info_type" in
+                        "desc") echo "设置 Docker Compose 执行权限" ;;
+                        "cmd") echo "chmod +x \$DOCKER_CONFIG/cli-plugins/docker-compose" ;;
+                        "critical") echo "true" ;;
+                    esac
+                    ;;
+                14)
+                    case "$info_type" in
+                        "desc") echo "验证 Docker Compose 安装" ;;
+                        "cmd") echo "docker compose version" ;;
                         "critical") echo "false" ;;
                     esac
                     ;;
@@ -208,37 +256,9 @@ get_step_info() {
             case "$step_num" in
                 1)
                     case "$info_type" in
-                        "desc") echo "检查 Docker 是否已安装" ;;
-                        "cmd") echo "docker --version" ;;
+                        "desc") echo "执行 NginxUI 一键安装脚本" ;;
+                        "cmd") echo "bash -c \"\$(curl -L https://cloud.nginxui.com/install.sh)\" @ install -r https://cloud.nginxui.com/" ;;
                         "critical") echo "true" ;;
-                    esac
-                    ;;
-                2)
-                    case "$info_type" in
-                        "desc") echo "创建 NginxUI 配置目录" ;;
-                        "cmd") echo "sudo mkdir -p /etc/nginxui" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                3)
-                    case "$info_type" in
-                        "desc") echo "下载 NginxUI 镜像" ;;
-                        "cmd") echo "sudo docker pull uozi/nginx-ui:latest" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                4)
-                    case "$info_type" in
-                        "desc") echo "创建 NginxUI 容器" ;;
-                        "cmd") echo "sudo docker run -d --name nginxui --restart=always -e SKIP_INSTALL=true -p 8080:80 -p 8443:443 -v /etc/nginx:/etc/nginx -v /etc/nginxui:/etc/nginxui uozi/nginx-ui:latest" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                5)
-                    case "$info_type" in
-                        "desc") echo "检查容器状态" ;;
-                        "cmd") echo "sudo docker ps | grep nginxui" ;;
-                        "critical") echo "false" ;;
                     esac
                     ;;
             esac
@@ -250,8 +270,8 @@ get_step_info() {
 get_step_count() {
     case "$1" in
         "nginx") echo "7" ;;
-        "docker") echo "10" ;;
-        "nginxui") echo "5" ;;
+        "docker") echo "14" ;;
+        "nginxui") echo "1" ;;
         *) echo "0" ;;
     esac
 }
@@ -266,9 +286,9 @@ execute_step() {
     local cmd="$2"
     local critical="$3"
     local simulate="${4:-true}"  # 默认模拟模式
-    
+
     echo -e "${GREEN}✓ ${desc}...${NC}"
-    
+
     if [ "$simulate" = "true" ]; then
         # 模拟模式 - 仅显示命令
         echo -e "${BLUE}  模拟命令: ${cmd}${NC}"
@@ -277,7 +297,7 @@ execute_step() {
     else
         # 真实执行模式
         echo -e "${PURPLE}  执行命令: ${cmd}${NC}"
-        
+
         # 执行命令
         if eval "$cmd" 2>/dev/null; then
             echo -e "${GREEN}    执行成功${NC}"
@@ -300,51 +320,53 @@ execute_service_installation() {
     local service_name="$1"
     local service_display_name="$2"
     local simulate="${3:-true}"  # 默认模拟模式
-    
+
     echo -e "${CYAN}================================${NC}"
     echo -e "${YELLOW} 开始安装 ${service_display_name}...${NC}"
     echo -e "${CYAN}================================${NC}"
     echo ""
-    
+
     # 获取步骤总数
     local total_steps=$(get_step_count "$service_name")
-    
+
     # 执行所有步骤
     for ((i=1; i<=total_steps; i++)); do
         local desc=$(get_step_info "$service_name" "$i" "desc")
         local cmd=$(get_step_info "$service_name" "$i" "cmd")
         local critical=$(get_step_info "$service_name" "$i" "critical")
-        
+
         # 执行步骤
         if ! execute_step "$desc" "$cmd" "$critical" "$simulate"; then
             return 1  # 如果关键步骤失败，退出安装
         fi
     done
-    
+
     echo ""
     echo -e "${GREEN}✅ ${service_display_name} 安装完成！${NC}"
-    
+
     # 显示服务特定的后续信息
     case "$service_name" in
         "nginx")
-            echo -e "${YELLOW}   服务端口: 80 (HTTP), 443 (HTTPS)${NC}"
+            echo -e "${YELLOW}   访问地址: http://${SERVER_IP} (端口80)${NC}"
+            echo -e "${YELLOW}   HTTPS地址: https://${SERVER_IP} (端口443)${NC}"
             echo -e "${YELLOW}   配置文件: /etc/nginx/nginx.conf${NC}"
             echo -e "${YELLOW}   管理命令: sudo systemctl start|stop|restart nginx${NC}"
             ;;
         "docker")
-            echo -e "${YELLOW}   版本信息: docker --version${NC}"
+            echo -e "${YELLOW}   Docker版本: docker -v${NC}"
+            echo -e "${YELLOW}   Compose版本: docker compose version${NC}"
             echo -e "${YELLOW}   用户组: 注销重新登录后生效${NC}"
             echo -e "${YELLOW}   管理命令: sudo systemctl start|stop|restart docker${NC}"
             ;;
         "nginxui")
-            echo -e "${YELLOW}   访问地址: http://your-server:8080${NC}"
-            echo -e "${YELLOW}   HTTPS地址: https://your-server:8443${NC}"
-            echo -e "${YELLOW}   默认用户: admin${NC}"
-            echo -e "${YELLOW}   默认密码: admin${NC}"
+            echo -e "${YELLOW}   访问地址: http://${SERVER_IP}:9000${NC}"
+            echo -e "${YELLOW}   配置文件: /usr/local/etc/nginx-ui/app.ini${NC}"
+            echo -e "${YELLOW}   服务管理: systemctl start|stop|restart nginxui${NC}"
+            echo -e "${YELLOW}   说明: 首次访问将引导设置管理员账号${NC}"
             ;;
     esac
     echo ""
-    
+
     return 0
 }
 
@@ -359,23 +381,23 @@ SIMULATE_MODE=true
 show_service_steps() {
     local service_name="$1"
     local service_display_name="$2"
-    
+
     clear_screen
     show_welcome
-    
+
     echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║${BOLD}${CYAN}                    ${service_display_name} 预制安装步骤                   ${NC}${BLUE}║${NC}"
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
-    
+
     # 获取步骤总数
     local total_steps=$(get_step_count "$service_name")
-    
+
     # 显示所有步骤
     for ((i=1; i<=total_steps; i++)); do
         local desc=$(get_step_info "$service_name" "$i" "desc")
         local cmd=$(get_step_info "$service_name" "$i" "cmd")
         local critical=$(get_step_info "$service_name" "$i" "critical")
-        
+
         # 显示步骤
         local critical_mark=""
         if [ "$critical" = "true" ]; then
@@ -383,12 +405,12 @@ show_service_steps() {
         else
             critical_mark="${YELLOW}[可选]${NC}"
         fi
-        
+
         echo -e "${BLUE}║${NC} ${GREEN}步骤 $i:${NC} $desc $critical_mark"
         echo -e "${BLUE}║${NC}   ${PURPLE}命令:${NC} $cmd"
         echo -e "${BLUE}║${NC}"
     done
-    
+
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BLUE}║${NC} ${CYAN}总共 $total_steps 个安装步骤${NC}"
     echo -e "${BLUE}║${NC} ${GREEN}[必需]${NC} 步骤失败将中止安装${NC}"
@@ -637,6 +659,9 @@ main() {
     # 设置终端
     hide_cursor
     trap 'show_cursor; exit' EXIT
+
+    # 获取服务器IP地址
+    get_server_ip
 
     # 显示欢迎界面和菜单
     show_welcome
