@@ -84,6 +84,87 @@ get_server_ip() {
 }
 
 # =============================================================================
+# 服务安装状态检测
+# =============================================================================
+
+# 检测Nginx是否已安装
+check_nginx_installed() {
+    if command -v nginx >/dev/null 2>&1; then
+        local version=$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [ -n "$version" ]; then
+            echo "已安装，版本：$version"
+            return 0
+        else
+            echo "已安装，版本未知"
+            return 0
+        fi
+    else
+        echo "未安装"
+        return 1
+    fi
+}
+
+# 检测Docker是否已安装
+check_docker_installed() {
+    if command -v docker >/dev/null 2>&1; then
+        local docker_version=$(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        local compose_version=""
+        
+        # 检测Docker Compose
+        if docker compose version >/dev/null 2>&1; then
+            compose_version=$(docker compose version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        fi
+        
+        if [ -n "$docker_version" ]; then
+            if [ -n "$compose_version" ]; then
+                echo "已安装，Docker:$docker_version + Compose:$compose_version"
+            else
+                echo "已安装，Docker:$docker_version (无Compose)"
+            fi
+            return 0
+        else
+            echo "已安装，版本未知"
+            return 0
+        fi
+    else
+        echo "未安装"
+        return 1
+    fi
+}
+
+# 检测NginxUI是否已安装
+check_nginxui_installed() {
+    # 检查服务是否存在并运行
+    if systemctl is-active nginxui >/dev/null 2>&1; then
+        echo "已安装，服务运行中"
+        return 0
+    elif systemctl list-unit-files | grep -q nginxui 2>/dev/null; then
+        echo "已安装，服务已停止"
+        return 0
+    # 检查端口是否被占用
+    elif netstat -tlnp 2>/dev/null | grep -q ":9000 " || ss -tlnp 2>/dev/null | grep -q ":9000 "; then
+        echo "已安装，端口9000使用中"
+        return 0
+    else
+        echo "未安装"
+        return 1
+    fi
+}
+
+# 获取服务安装状态
+get_service_status() {
+    case "$1" in
+        "nginx") check_nginx_installed ;;
+        "docker") check_docker_installed ;;
+        "nginxui") check_nginxui_installed ;;
+        *) echo "未知服务" && return 1 ;;
+    esac
+}
+
+# 服务状态数组 (存储检测结果)
+declare -a service_status=("" "" "")
+
+# =============================================================================
 # 预制安装步骤配置 (兼容bash 3.x)
 # =============================================================================
 
@@ -315,6 +396,64 @@ execute_step() {
     fi
 }
 
+# 检查服务是否需要跳过安装
+check_skip_installation() {
+    local service_name="$1"
+    local service_display_name="$2"
+    local simulate="$3"
+    
+    # 重新检测当前安装状态（可能在安装过程中状态发生变化）
+    local current_status=$(get_service_status "$service_name")
+    
+    if [[ "$current_status" == *"已安装"* ]]; then
+        echo -e "${YELLOW}⚠️  检测到 ${service_display_name} 已安装 ($current_status)${NC}"
+        echo ""
+        
+        while true; do
+            echo -e "${CYAN}请选择操作:${NC}"
+            echo -e "${GREEN}  [1] 跳过安装 (推荐)${NC}"
+            if [ "$simulate" = "true" ]; then
+                echo -e "${YELLOW}  [2] 模拟重新安装 (仅显示命令)${NC}"
+            else
+                echo -e "${YELLOW}  [2] 重新安装 (覆盖现有)${NC}"
+            fi
+            echo -e "${RED}  [3] 取消${NC}"
+            echo ""
+            echo -n -e "${BOLD}${YELLOW}请输入选择 [1/2/3]: ${NC}"
+            
+            read -n 1 choice
+            echo ""
+            
+            case "$choice" in
+                1)
+                    echo -e "${GREEN}✅ 已跳过 ${service_display_name} 安装${NC}"
+                    echo ""
+                    return 2  # 返回2表示跳过
+                    ;;
+                2)
+                    if [ "$simulate" = "true" ]; then
+                        echo -e "${BLUE}⚠️  将模拟重新安装 ${service_display_name}...${NC}"
+                    else
+                        echo -e "${YELLOW}⚠️  将重新安装 ${service_display_name}...${NC}"
+                    fi
+                    echo ""
+                    return 0  # 返回0表示继续安装
+                    ;;
+                3)
+                    echo -e "${RED}❌ 已取消 ${service_display_name} 安装${NC}"
+                    echo ""
+                    return 1  # 返回1表示取消
+                    ;;
+                *)
+                    echo -e "${RED}无效选择，请输入 1、2 或 3${NC}"
+                    ;;
+            esac
+        done
+    else
+        return 0  # 未安装，继续正常安装
+    fi
+}
+
 # 通用安装函数
 execute_service_installation() {
     local service_name="$1"
@@ -322,9 +461,30 @@ execute_service_installation() {
     local simulate="${3:-true}"  # 默认模拟模式
 
     echo -e "${CYAN}================================${NC}"
-    echo -e "${YELLOW} 开始安装 ${service_display_name}...${NC}"
+    echo -e "${YELLOW} 准备安装 ${service_display_name}...${NC}"
     echo -e "${CYAN}================================${NC}"
     echo ""
+
+    # 检查是否需要跳过安装（不管什么模式都检查）
+    check_skip_installation "$service_name" "$service_display_name" "$simulate"
+    local skip_result=$?
+    
+    case $skip_result in
+        1)  # 用户取消
+            return 1
+            ;;
+        2)  # 用户选择跳过
+            return 0
+            ;;
+        0)  # 继续安装
+            if [ "$simulate" = "true" ]; then
+                echo -e "${BLUE}开始模拟安装 ${service_display_name}...${NC}"
+            else
+                echo -e "${GREEN}开始安装 ${service_display_name}...${NC}"
+            fi
+            echo ""
+            ;;
+    esac
 
     # 获取步骤总数
     local total_steps=$(get_step_count "$service_name")
@@ -421,6 +581,18 @@ show_service_steps() {
     read -n 1 -s
 }
 
+# 检测所有服务状态
+detect_service_status() {
+    echo -n "正在检测服务安装状态..."
+    
+    # 检测各个服务
+    service_status[0]=$(get_service_status "nginx")
+    service_status[1]=$(get_service_status "nginxui") 
+    service_status[2]=$(get_service_status "docker")
+    
+    echo " 完成"
+}
+
 # 绘制菜单
 draw_menu() {
     clear_screen
@@ -432,31 +604,60 @@ draw_menu() {
 
     for i in "${!menu_options[@]}"; do
         local option="${menu_options[$i]}"
+        local status="${service_status[$i]}"
         local checkbox=""
         local cursor=""
         local color=""
+        local status_text=""
 
-        # 设置复选框状态
-        if [ "${selected[$i]}" -eq 1 ]; then
-            checkbox="${GREEN}[✓]${NC}"
+        # 根据安装状态设置显示
+        if [[ "$status" == *"已安装"* ]]; then
+            if [ "${selected[$i]}" -eq 1 ]; then
+                checkbox="${GREEN}[✓]${NC}"
+            else
+                checkbox="${GREEN}[✓]${NC}"  # 已安装的显示为绿色勾
+            fi
+            status_text=" ${CYAN}($status)${NC}"
+            # 已安装的服务名称用绿色显示
+            color="${GREEN}"
         else
-            checkbox="${RED}[ ]${NC}"
-        fi
-
-        # 设置光标和颜色
-        if [ "$i" -eq "$current_pos" ]; then
-            cursor="${YELLOW}➤ ${NC}"
-            color="${BOLD}${WHITE}"
-        else
-            cursor="  "
+            if [ "${selected[$i]}" -eq 1 ]; then
+                checkbox="${GREEN}[✓]${NC}"
+            else
+                checkbox="${RED}[ ]${NC}"
+            fi
+            status_text=""
             color=""
         fi
 
-        echo -e "${BLUE}${NC} ${cursor}${checkbox} ${color}${option}${NC}$(printf '%*s' $((48 - ${#option})) '')${BLUE}${NC}"
+        # 设置光标
+        if [ "$i" -eq "$current_pos" ]; then
+            cursor="${YELLOW}➤ ${NC}"
+            if [[ "$status" != *"已安装"* ]]; then
+                color="${BOLD}${WHITE}"
+            fi
+        else
+            cursor="  "
+        fi
+
+        # 计算状态文本长度用于对齐
+        local status_length=0
+        if [[ "$status" == *"已安装"* ]]; then
+            # 估算中文字符长度（简单处理）
+            status_length=$((${#status} + 5))
+        fi
+
+        local padding=$((48 - ${#option} - status_length))
+        if [ $padding -lt 0 ]; then
+            padding=0
+        fi
+
+        echo -e "${BLUE}${NC} ${cursor}${checkbox} ${color}${option}${status_text}${NC}$(printf '%*s' $padding '')${BLUE}${NC}"
     done
 
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BLUE}║${NC} ${PURPLE}提示: 使用空格键选择项目，回车键开始安装${NC}                     ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC} ${CYAN}说明: 绿色表示已安装，可选择重新安装${NC}                       ${BLUE}║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -573,8 +774,21 @@ show_confirmation() {
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BLUE}║${NC} ${CYAN}您已选择安装以下服务:${NC}                                        ${BLUE}║${NC}"
 
-    for item in "${selected_items[@]}"; do
-        echo -e "${BLUE}${NC}   ${GREEN} ${item}${NC}$(printf '%*s' $((50 - ${#item})) '')${BLUE}${NC}"
+    local item_index=0
+    for i in "${!selected[@]}"; do
+        if [ "${selected[$i]}" -eq 1 ]; then
+            local item="${menu_options[$i]}"
+            local status="${service_status[$i]}"
+            local status_display=""
+            
+            if [[ "$status" == *"已安装"* ]]; then
+                status_display=" ${YELLOW}($status - 将重新安装)${NC}"
+            else
+                status_display=" ${GREEN}(新安装)${NC}"
+            fi
+            
+            echo -e "${BLUE}${NC}   ${GREEN}🔧 ${item}${status_display}${NC}"
+        fi
     done
 
     echo -e "${BLUE}║${NC}                                                              ${BLUE}║${NC}"
@@ -583,6 +797,7 @@ show_confirmation() {
     echo -e "${BLUE}║${NC}   ${RED}• 安装过程需要管理员权限${NC}                                   ${BLUE}║${NC}"
     echo -e "${BLUE}║${NC}   ${RED}• 请确保网络连接正常${NC}                                       ${BLUE}║${NC}"
     echo -e "${BLUE}║${NC}   ${RED}• 安装可能需要几分钟时间${NC}                                   ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}   ${CYAN}• 已安装服务将询问是否跳过或重新安装${NC}                   ${BLUE}║${NC}"
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BLUE}║${NC} ${PURPLE}安装模式选择:${NC}                                               ${BLUE}║${NC}"
     echo -e "${BLUE}║${NC}                                                              ${BLUE}║${NC}"
@@ -662,6 +877,9 @@ main() {
 
     # 获取服务器IP地址
     get_server_ip
+    
+    # 检测服务安装状态
+    detect_service_status
 
     # 显示欢迎界面和菜单
     show_welcome
