@@ -60,7 +60,7 @@ declare -a menu_options=(
     "Nginx 服务器"
     "NginxUI 管理界面"
     "Docker 容器引擎"
-    "GOECS 服务器测试"
+    "1Panel 运维面板"
 )
 
 # 选择状态数组 (0=未选择, 1=已选择)
@@ -152,14 +152,18 @@ check_nginxui_installed() {
     fi
 }
 
-# 检测GOECS是否已安装
-check_goecs_installed() {
-    if command -v goecs >/dev/null 2>&1; then
-        echo "已安装，命令可用"
+# 检测1Panel是否已安装
+check_1panel_installed() {
+    # 检查1panel服务状态
+    if systemctl is-active 1panel >/dev/null 2>&1; then
+        echo "已安装，服务运行中"
         return 0
-    # 检查goecs.sh脚本是否存在
-    elif [ -f "./goecs.sh" ] || [ -f "/usr/local/bin/goecs" ] || [ -f "/usr/bin/goecs" ]; then
-        echo "已安装，脚本存在"
+    elif systemctl list-unit-files | grep -q 1panel 2>/dev/null; then
+        echo "已安装，服务已停止"
+        return 0
+    # 检查1panel命令是否存在
+    elif command -v 1pctl >/dev/null 2>&1; then
+        echo "已安装，命令可用"
         return 0
     else
         echo "未安装"
@@ -173,7 +177,7 @@ get_service_status() {
         "nginx") check_nginx_installed ;;
         "docker") check_docker_installed ;;
         "nginxui") check_nginxui_installed ;;
-        "goecs") check_goecs_installed ;;
+        "1panel") check_1panel_installed ;;
         *) echo "未知服务" && return 1 ;;
     esac
 }
@@ -361,40 +365,12 @@ get_step_info() {
                     ;;
             esac
             ;;
-        "goecs")
+        "1panel")
             case "$step_num" in
                 1)
                     case "$info_type" in
-                        "desc") echo "设置非交互模式环境变量" ;;
-                        "cmd") echo "export noninteractive=true" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                2)
-                    case "$info_type" in
-                        "desc") echo "下载 GOECS 安装脚本" ;;
-                        "cmd") echo "curl -L https://raw.githubusercontent.com/oneclickvirt/ecs/master/goecs.sh -o goecs.sh" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                3)
-                    case "$info_type" in
-                        "desc") echo "设置脚本执行权限" ;;
-                        "cmd") echo "chmod +x goecs.sh" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                4)
-                    case "$info_type" in
-                        "desc") echo "配置 GOECS 环境" ;;
-                        "cmd") echo "./goecs.sh env" ;;
-                        "critical") echo "true" ;;
-                    esac
-                    ;;
-                5)
-                    case "$info_type" in
-                        "desc") echo "执行 GOECS 安装" ;;
-                        "cmd") echo "./goecs.sh install" ;;
+                        "desc") echo "执行 1Panel 一键安装脚本" ;;
+                        "cmd") echo "bash -c \"\$(curl -sSL https://resource.fit2cloud.com/1panel/package/v2/quick_start.sh)\"" ;;
                         "critical") echo "true" ;;
                     esac
                     ;;
@@ -409,7 +385,7 @@ get_step_count() {
         "nginx") echo "7" ;;
         "docker") echo "14" ;;
         "nginxui") echo "1" ;;
-        "goecs") echo "5" ;;
+        "1panel") echo "1" ;;
         *) echo "0" ;;
     esac
 }
@@ -581,11 +557,11 @@ execute_service_installation() {
             echo -e "${YELLOW}   服务管理: systemctl start|stop|restart nginxui${NC}"
             echo -e "${YELLOW}   说明: 首次访问将引导设置管理员账号${NC}"
             ;;
-        "goecs")
-            echo -e "${YELLOW}   启动命令: goecs${NC}"
-            echo -e "${YELLOW}   脚本文件: ./goecs.sh${NC}"
-            echo -e "${YELLOW}   项目地址: https://github.com/oneclickvirt/ecs${NC}"
-            echo -e "${YELLOW}   说明: 服务器性能测试工具，使用 goecs 命令启动${NC}"
+        "1panel")
+            echo -e "${YELLOW}   管理命令: 1pctl user-info (查看管理员信息)${NC}"
+            echo -e "${YELLOW}   配置目录: /opt/1panel${NC}"
+            echo -e "${YELLOW}   服务管理: systemctl start|stop|restart 1panel${NC}"
+            echo -e "${YELLOW}   说明: 安装完成后会显示初始账号密码${NC}"
             ;;
     esac
     echo ""
@@ -652,23 +628,9 @@ detect_service_status() {
     service_status[0]=$(get_service_status "nginx")
     service_status[1]=$(get_service_status "nginxui")
     service_status[2]=$(get_service_status "docker")
-    service_status[3]=$(get_service_status "goecs")
-
-    # 自动取消已安装服务的选择状态
-    for i in "${!service_status[@]}"; do
-        if is_service_installed "$i"; then
-            selected[$i]=0
-        fi
-    done
+    service_status[3]=$(get_service_status "1panel")
 
     echo " 完成"
-}
-
-# 检查服务是否已安装 (辅助函数)
-is_service_installed() {
-    local index="$1"
-    local status="${service_status[$index]}"
-    [[ "$status" == *"已安装"* ]]
 }
 
 # 绘制菜单
@@ -689,13 +651,16 @@ draw_menu() {
         local status_text=""
 
         # 根据安装状态设置显示
-        if is_service_installed "$i"; then
-            # 已安装的服务 - 不可选择
-            checkbox="${CYAN}[◆]${NC}"  # 使用特殊符号表示已安装且不可选择
+        if [[ "$status" == *"已安装"* ]]; then
+            if [ "${selected[$i]}" -eq 1 ]; then
+                checkbox="${GREEN}[✓]${NC}"
+            else
+                checkbox="${GREEN}[✓]${NC}"  # 已安装的显示为绿色勾
+            fi
             status_text=" ${CYAN}($status)${NC}"
-            color="${CYAN}"  # 已安装的服务用青色显示
+            # 已安装的服务名称用绿色显示
+            color="${GREEN}"
         else
-            # 未安装的服务 - 可选择
             if [ "${selected[$i]}" -eq 1 ]; then
                 checkbox="${GREEN}[✓]${NC}"
             else
@@ -708,10 +673,8 @@ draw_menu() {
         # 设置光标
         if [ "$i" -eq "$current_pos" ]; then
             cursor="${YELLOW}➤ ${NC}"
-            if ! is_service_installed "$i"; then
+            if [[ "$status" != *"已安装"* ]]; then
                 color="${BOLD}${WHITE}"
-            else
-                color="${BOLD}${CYAN}"  # 已安装服务的光标也用青色
             fi
         else
             cursor="  "
@@ -719,7 +682,7 @@ draw_menu() {
 
         # 计算状态文本长度用于对齐
         local status_length=0
-        if is_service_installed "$i"; then
+        if [[ "$status" == *"已安装"* ]]; then
             # 估算中文字符长度（简单处理）
             status_length=$((${#status} + 5))
         fi
@@ -734,7 +697,7 @@ draw_menu() {
 
     echo -e "${BLUE}╠══════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BLUE}║${NC} ${PURPLE}提示: 使用空格键选择项目，回车键开始安装${NC}                     ${BLUE}║${NC}"
-    echo -e "${BLUE}║${NC} ${CYAN}说明: 青色表示已安装（不可选择），空格可选择未安装服务${NC}       ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC} ${CYAN}说明: 绿色表示已安装，可选择重新安装${NC}                       ${BLUE}║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -786,20 +749,14 @@ handle_menu() {
                 fi
                 ;;
             "SPACE")
-                # 检查是否为已安装的服务
-                if is_service_installed "$current_pos"; then
-                    echo -e "${YELLOW}该服务已安装，无法选择${NC}" >&2
-                    sleep 0.5
+                if [ "${selected[$current_pos]}" -eq 1 ]; then
+                    selected[$current_pos]=0
+                    echo -e "${YELLOW}已取消选择: ${menu_options[$current_pos]}${NC}" >&2
                 else
-                    if [ "${selected[$current_pos]}" -eq 1 ]; then
-                        selected[$current_pos]=0
-                        echo -e "${YELLOW}已取消选择: ${menu_options[$current_pos]}${NC}" >&2
-                    else
-                        selected[$current_pos]=1
-                        echo -e "${GREEN}已选择: ${menu_options[$current_pos]}${NC}" >&2
-                    fi
-                    sleep 0.2  # 短暂停顿显示反馈
+                    selected[$current_pos]=1
+                    echo -e "${GREEN}已选择: ${menu_options[$current_pos]}${NC}" >&2
                 fi
+                sleep 0.2  # 短暂停顿显示反馈
                 ;;
             "ENTER")
                 return 0
@@ -826,9 +783,9 @@ install_docker() {
     execute_service_installation "docker" "Docker 容器引擎" "$SIMULATE_MODE"
 }
 
-# 安装 GOECS (使用预制步骤)
-install_goecs() {
-    execute_service_installation "goecs" "GOECS 服务器测试" "$SIMULATE_MODE"
+# 安装 1Panel (使用预制步骤)
+install_1panel() {
+    execute_service_installation "1panel" "1Panel 运维面板" "$SIMULATE_MODE"
 }
 
 # 显示选择确认
@@ -940,7 +897,7 @@ execute_installations() {
                 0) install_nginx ;;
                 1) install_nginxui ;;
                 2) install_docker ;;
-                3) install_goecs ;;
+                3) install_1panel ;;
             esac
         fi
     done
