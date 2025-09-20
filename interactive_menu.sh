@@ -60,8 +60,8 @@ declare -a menu_options=(
     "Nginx 服务器"
     "NginxUI 管理界面"
     "Docker 容器引擎"
-    "1Panel 运维面板"
     "GOECS 服务器测试"
+    "1Panel 运维面板"
 )
 
 # 选择状态数组 (0=未选择, 1=已选择)
@@ -200,7 +200,7 @@ get_service_status() {
 }
 
 # 服务状态数组 (存储检测结果)
-declare -a service_status=("" "" "" "")
+declare -a service_status=("" "" "" "" "")
 
 # =============================================================================
 # 预制安装步骤配置 (兼容bash 3.x)
